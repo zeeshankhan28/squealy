@@ -13,6 +13,9 @@
     },
     {
       "url": "heroku/python"
+    },
+    {
+      "url": "https://github.com/stomita/heroku-buildpack-phantomjs"
     }
   ],
   "env": {
@@ -63,6 +66,10 @@
     "EMAIL_PORT": {
       "description": "Port for the email host",
       "required": false
-    }
+    },
+    "LD_LIBRARY_PATH": {
+      "description":"PhantomJS has a dependency on libQtWebKit.so.4, which the PhantomJS buildpack installs on Heroku in/app/vendor/phantomjs/lib",
+      "value": "/usr/local/lib:/usr/lib:/lib:/app/vendor/phantomjs/lib"
+  }
   }
 }
