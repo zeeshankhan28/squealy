@@ -137,21 +137,6 @@ def create_email_chart(data_list=None, name=None, type=None):
     return content
 
 
-def create_email_data2(var=None):
-    content = '''
-        <!DOCTYPE html>
-            <html lang="en">
-            <head>
-                <meta charset="UTF-8">
-                <title>Title</title>
-            </head>
-            <body> 
-                <h1>image</h1>
-                <img src="data:image/jpeg;base64,'''+var+'''">
-            </body></html>'''
-    return content
-
-
 class MyEncoder(json.JSONEncoder):
     def default(self, obj):
         if isinstance(obj, (bytes, bytearray)):
@@ -221,7 +206,8 @@ def send_emails():
             if not report_config['recipients']:
                 raise EmailRecipientException('Recipients not provided for scheduled report %s' % (scheduled_report.id))
 
-        mail_server.sendmail(email_from, recipients, msg_root.as_string())
+            mail_server.sendmail(email_from, recipients, msg_root.as_string())
+
         mail_server.quit()
 
     else:
