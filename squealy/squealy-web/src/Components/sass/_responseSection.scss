@@ -1,3 +1,32 @@
+.chart-type-select {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  padding: 0 0 10px 0;
+
+  >img {
+    height: 26px;
+    margin-left: 15px;
+  }
+}
+
+.chart-config-modal {
+  width: 70%;
+}
+
+.error-box {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 85px;
+  background: $warning-bg-color;
+  color: $red-color;
+  font-size: 17px;
+  font-family: Roboto Bold;
+  padding: 10px;
+  margin-top: 2%;
+}
+
 
 .response-formatwrapper{
   background-color: #f6f6f6;
@@ -13,6 +42,13 @@
     }
   }
 }
+
+.visualchart {
+  > .error-box {
+    margin-top: 50px;
+  }
+}
+
 
 .json-response-wrapper {
   max-height: 350px;
@@ -43,7 +79,7 @@
 .response-section {
 
   #response-table {
-    height: 400px;
+    height: 300px;
     overflow-x: auto;
     box-shadow: 0 4px 8px 0 $light_gray_color , 0 6px 33px 0 $light_gray_color ;
 
@@ -78,4 +114,8 @@
       }
     }
   }
+}
+
+.error {
+  padding-left: 15px;
 }

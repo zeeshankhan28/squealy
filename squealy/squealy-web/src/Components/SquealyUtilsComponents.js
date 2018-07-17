@@ -1,5 +1,5 @@
 import React, {Component} from 'react'
-import {Modal} from 'react-bootstrap'
+import {Modal, OverlayTrigger, Tooltip} from 'react-bootstrap'
 
 export class SquealyModal extends Component {
 
@@ -12,22 +12,43 @@ export class SquealyModal extends Component {
       showModal,
       modalSize,
       closeModal,
-      dialogClassName
+      dialogClassName,
+      noFooter,
+      helpText
     } = this.props
 
+    const tooltip = 
+      <Tooltip id={'tooltip' + modalId}>
+        {helpText}
+      </Tooltip>
 
     return (
       <Modal dialogClassName={dialogClassName} show={showModal} onHide={closeModal} key={modalId} bsSize={modalSize}>
         <Modal.Header closeButton>
-          <Modal.Title>{modalHeader}</Modal.Title>
+          <Modal.Title>
+            {modalHeader}
+            {helpText?
+              <OverlayTrigger placement="right" overlay={tooltip}>
+                <i className="fa fa-question-circle-o info-icon" aria-hidden="true"></i>
+              </OverlayTrigger>
+            :
+              null
+            }
+          </Modal.Title>
         </Modal.Header>
         <Modal.Body>
           {modalContent}
         </Modal.Body>
-        <Modal.Footer>
-          <button onClick={closeModal} className="btn btn-default">Close</button>
-          {saveChanges ? <button onClick={saveChanges} className="btn btn-info">Save</button> : null}
-        </Modal.Footer>
+        {
+          noFooter ? null :
+            <Modal.Footer>
+              <button onClick={closeModal} className="btn btn-default">Close</button>
+              {
+                saveChanges ? 
+                  <button onClick={saveChanges} className="btn btn-primary">Save</button>
+                : null}
+            </Modal.Footer>
+        }
       </Modal>
     )
   }
@@ -38,18 +59,16 @@ export class SquealyDropdown extends Component {
   render () {
     const {name, options, selectedValue, onChangeHandler} = this.props
     return (
-      <div>
         <select value={selectedValue} id='params_type' onChange={(e) => onChangeHandler(e.target.value)}>
-          {
-            options.map((option, i) => {
-              return ((typeof option === 'object') ? 
-                <option key={'dropdown_'+i} value={option.value}>{option.label}</option>
-                :
-                <option key={'dropdown_'+i} value={option}>{option}</option>)
-            })
-          }
-        </select>
-      </div>
+        {
+          options.map((option, i) => {
+            return ((option.constructor === Object) ? 
+              <option key={'dropdown_'+i} value={option.value}>{option.label}</option>
+              :
+              <option key={'dropdown_'+i} value={option}>{option}</option>)
+          })
+        }
+      </select>
     )
   }
 }

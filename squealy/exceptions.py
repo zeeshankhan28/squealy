@@ -8,17 +8,17 @@ class RequiredParameterMissingException(APIException):
 
 
 class DateParseException(APIException):
-    status_code = status.HTTP_400_BAD_REQUEST
+    status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
     pass
 
 
 class DateTimeParseException(APIException):
-    status_code = status.HTTP_400_BAD_REQUEST
+    status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
     pass
 
 
 class NumberParseException(APIException):
-    status_code = status.HTTP_400_BAD_REQUEST
+    status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
     pass
 
 
@@ -27,6 +27,71 @@ class ValidationFailedException(APIException):
     pass
 
 
-class DashboardNotFoundException(APIException):
+class ChartNotFoundException(APIException):
+    status_code = status.HTTP_400_BAD_REQUEST
+    pass
+
+
+class FilterNotFoundException(APIException):
+    status_code = status.HTTP_400_BAD_REQUEST
+    pass
+
+
+class MalformedChartDataException(APIException):
+    status_code = status.HTTP_400_BAD_REQUEST
+    pass
+
+
+class TransformationException(APIException):
+    status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
+    pass
+
+
+class DatabaseWriteException(APIException):
+    status_code = status.HTTP_400_BAD_REQUEST
+    pass
+
+
+class InvalidDateRangeException(APIException):
+    status_code = status.HTTP_400_BAD_REQUEST
+    pass
+
+
+class DuplicateUrlException(APIException):
+    status_code = status.HTTP_400_BAD_REQUEST
+    pass
+
+
+class SMTPException(APIException):
+    status_code = status.HTTP_400_BAD_REQUEST
+    pass
+
+
+class EmailRecipientException(APIException):
+    status_code = status.HTTP_400_BAD_REQUEST
+    pass
+
+
+class EmailSubjectException(APIException):
+    status_code = status.HTTP_400_BAD_REQUEST
+    pass
+
+
+class InvalidChartDataException(APIException):
+    status_code = status.HTTP_400_BAD_REQUEST
+    pass
+
+
+class DatabaseConfigurationException(APIException):
+    status_code = status.HTTP_400_BAD_REQUEST
+    pass
+
+
+class SelectedDatabaseException(APIException):
+    status_code = status.HTTP_400_BAD_REQUEST
+    pass
+
+
+class ChartNameInvalidException(APIException):
     status_code = status.HTTP_400_BAD_REQUEST
     pass

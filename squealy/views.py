@@ -1,185 +1,185 @@
-import importlib
-from os.path import join, isfile
+import os
+import re
 
-from django.conf.urls import url, include
+from django.contrib.auth.models import Permission
+from django.contrib.contenttypes.models import ContentType
+from django.db import connections
+from django.db.utils import IntegrityError
+from django.shortcuts import render
+from django.db import transaction
+from django.http import HttpResponse, JsonResponse
+
+
 from rest_framework.authentication import SessionAuthentication, BasicAuthentication
 from rest_framework.decorators import permission_classes, api_view
-from rest_framework.permissions import IsAuthenticated, IsAdminUser
+from rest_framework.permissions import IsAdminUser, BasePermission
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
-import rest_framework
 
+from pyathenajdbc import connect
 
-from jinjasql import JinjaSql
-from django.db import connections
-from django.shortcuts import render
-from django.conf import settings
-from .exceptions import RequiredParameterMissingException, DashboardNotFoundException
+from squealy.constants import SQL_WRITE_BLACKLIST, SWAGGER_JSON_TEMPLATE, SWAGGER_DICT
+from squealy.jinjasql_loader import configure_jinjasql
+
+from squealy.serializers import ChartSerializer, FilterSerializer
+from .exceptions import RequiredParameterMissingException,\
+                        ChartNotFoundException, MalformedChartDataException, \
+                        TransformationException, DatabaseWriteException, DuplicateUrlException,\
+                        FilterNotFoundException, DatabaseConfigurationException,\
+                        SelectedDatabaseException, ChartNameInvalidException
 from .transformers import *
 from .formatters import *
 from .parameters import *
-from .utils import SquealySettings
-from .table import Table, Column
-from pydoc import locate
-import yaml
-import os
-import json
-from django.core.files import File
+from .table import Table
+from .models import Chart, Transformation, Validation, Filter, Parameter, FilterParameter
+from .validators import run_validation
+import json, ast
 
-jinjasql = JinjaSql()
 
-class SqlApiView(APIView):
-    # validations = []
-    # transformations = []
-    # formatter = DefaultFormatter
-    connection_name = "default"
-    permission_classes = SquealySettings.get_default_permission_classes()
+jinjasql = configure_jinjasql()
+
+
+class DatabaseView(APIView):
     authentication_classes = [SessionAuthentication, BasicAuthentication]
-    authentication_classes.extend(SquealySettings.get_default_authentication_classes())
-
-    def post(self, request, *args, **kwargs):
-        try:
-            params = request.data.get('params', {})
-            if request.data.get('connection'):
-                self.connection_name = request.data.get('connection')
-            # TODO: handle no query exception  here
-            user = request.data.get('user', None)
-            if request.data.get('parameters'):
-                self.parameters = request.data.get('parameters')
-                params = self.parse_params(params)
-            if request.data.get('validations'):
-                self.validations = request.data.get('validations')
-                self.run_validations(params, user)
-            self.query = request.data.get('config').get('query', '')
-            self.columns = request.data.get('columns')
-            # Execute the SQL Query, and return a Table
-            table = self._execute_query(params, user)
-            if request.data.get('transformations'):
-                # Perform basic transformations on the table
-                self.transformations = request.data.get('transformations', [])
-                table = self._run_transformations(table)
-            # Format the table according to the format requested
-            self.format = request.data.get('format', 'SimpleFormatter')
-            data = self._format(table)
-            return Response(data, status.HTTP_200_OK)
-        except Exception as e:
-            return Response({'error': str(e)}, status.HTTP_400_BAD_REQUEST)
 
     def get(self, request, *args, **kwargs):
-        # When this function is called, DRF has already done:
-        # 1. Authentication Checks
-        # 2. Permission Checks
-        # 3. Throttling
-        params = request.GET.copy()
-        user = request.user
-        if hasattr(self, 'parameters'):
-            params = self.parse_params(params)
-        if hasattr(self, 'validations'):
-            self.run_validations(params, user)
+        try:
+            database_response = []
+            database = connections.databases
+            for db in database:
+                if db != 'default':
+                    database_response.append({
+                      'value': db,
+                      'label': database[db]['OPTIONS']['display_name'] if 'OPTIONS' in database[db] and 'display_name' in database[db]['OPTIONS'] else db
+                    })
+            if not database_response:
+                raise DatabaseConfigurationException('No databases found. Make sure that you have defined database configuration in django admin')
+            return Response({'databases': database_response})
+        except Exception as e:
+            return Response({'error': str(e.message)}, status.HTTP_400_BAD_REQUEST)
 
-        # Execute the SQL Query, and return a Table
-        table = self._execute_query(params, user)
 
-        if hasattr(self, 'transformations'):
-            # Perform basic transformations on the table
-            table = self._run_transformations(table)
+class DataProcessor(object):
+
+    def fetch_chart_data(self, chart_url, params, user, chart_type=None):
+        """
+        This method gets the chart data
+        """
+        chart_attributes = ['parameters', 'validations']
+        chart = Chart.objects.filter(url=chart_url).prefetch_related(*chart_attributes).first()
+
+        if not chart:
+            raise ChartNotFoundException('Chart with url - %s not found' % chart_url)
+
+        if not chart.database:
+            raise SelectedDatabaseException('Database is not selected')
+
+        if not chart_type:
+            chart_type = chart.type
+        return self._process_chart_query(chart, params, user, chart_type)
+
+    def fetch_filter_data(self, filter_url, params, format_type, user):
+        """
+        Method to process the query and fetch the data for filter
+        """
+        filter_obj = Filter.objects.filter(url=filter_url).first()
+
+        if not filter_obj:
+            raise FilterNotFoundException('Filter with url - %s not found' % filter_url)
+
+        if not filter_obj.database:
+            raise SelectedDatabaseException('Database is not selected')
+
+        # Execute the Query, and return a Table
+        table = self._execute_query(params, user, filter_obj.query, filter_obj.database)
+        if format_type:
+            data = self._format(table, format_type)
+        else:
+            data = self._format(table, 'GoogleChartsFormatter', 'Table')
+
+        return data
+
+    def _process_chart_query(self, chart, params, user, chart_type):
+        """
+        Process and return the result after executing the chart query
+        """
+
+        # Parse Parameters
+        parameter_definitions = chart.parameters.all()
+        if parameter_definitions:
+            params = self._parse_params(params, parameter_definitions)
+
+        # Run Validations
+        validations = chart.validations.all()
+        if validations:
+            self._run_validations(params, user, validations, chart.database)
+
+        # Execute the Query, and return a Table
+        table = self._execute_query(params, user, chart.query, chart.database)
+
+        # Run Transformations
+        if chart.transpose:
+            table = Transpose().transform(table)
 
         # Format the table according to google charts / highcharts etc
-        data = self._format(table)
+        data = self._format(table, chart.format, chart_type)
 
-        # Return the response
-        return Response(data)
+        return data
 
-    def _format(self, table):
-        if hasattr(self, 'format'):
-            if '.' in self.format:
-                module_name, class_name = self.format.rsplit('.',1)
-                module = importlib.import_module(module_name)
-                formatter = getattr(module, class_name)()
-            elif self.format in ['table', 'json']:
-                formatter = SimpleFormatter()
-            else:
-                formatter = eval(self.format)()
-            return formatter.format(table)
-        return SimpleFormatter().format(table)
-
-    def _run_transformations(self, table):
-        for transformation in self.transformations:
-            if '.' in transformation.get('name'):
-                module_name, class_name = self.format.rsplit('.',1)
-                module = importlib.import_module(module_name)
-                transformer_instance = getattr(module, class_name)()
-            else:
-                transformer_instance = eval(transformation.get('name', 'TableTransformer').title())()
-            kwargs = transformation.get("kwargs", {})
-            table = transformer_instance.transform(table, **kwargs)
-        return table
-
-    def run_validations(self, params, user):
-        for validation in self.validations:
-            validation_function = locate(validation.get("validation_function").get("name"))
-            kwargs = validation.get("validation_function").get("kwargs", {})
-            validation_function(self, params, user, **kwargs)
-
-    def parse_params(self, params):
-        for param in self.parameters:
+    def _parse_params(self, params, parameter_definitions):
+        for index, param in enumerate(parameter_definitions):
             # Default values
-            if self.parameters[param].get('default_value') and\
-                    params.get(param) in [None, '']:
-                params[param] = self.parameters[param].get('default_value')
+            if param.default_value and \
+                    param.default_value!= '' and \
+                    params.get(param.name) in [None, '']:
+                params[param.name] = param.default_value
 
             # Check for missing required parameters
-            is_parameter_optional = self.parameters[param].get('optional',
-                                                               False)
-            if not is_parameter_optional and not params.get(param):
-                raise RequiredParameterMissingException("Parameter required: "+param)
+            mandatory = param.mandatory
+
+            if mandatory and params.get(param.name) is None:
+                raise RequiredParameterMissingException("Parameter required: " + param.name)
 
             # Formatting parameters
-            parameter_type_str = self.parameters[param].get("type", "String")
-            kwargs = self.parameters[param].get("kwargs", {})
-            if '.' in parameter_type_str:
-                module_name, class_name = parameter_type_str.rsplit('.', 1)
-                module = importlib.import_module(module_name)
-                parameter_type = getattr(module, class_name)
+            parameter_type_str = param.data_type
+
+            #FIXME: kwargs should not come as unicode. Need to debug the root cause and fix it.
+            if isinstance(param.kwargs, unicode):
+                kwargs = ast.literal_eval(param.kwargs)
             else:
-                parameter_type = eval(parameter_type_str.title())
-            if params.get(param):
-                params[param] = parameter_type(param, **kwargs).to_internal(params[param])
+                kwargs = param.kwargs
+
+            parameter_type = eval(parameter_type_str.title())
+            if params.get(param.name):
+                params[param.name] = parameter_type(param.name, **kwargs).to_internal(params[param.name])
         return params
 
-    def _execute_query(self, params, user):
+    def _run_validations(self, params, user, validations, db):
+        for validation in validations:
+            run_validation(params, user, validation.query, db)
 
-        query, bind_params = jinjasql.prepare_query(self.query,
+    def _check_read_only_query(self, query):
+        pass
+
+    def _execute_query(self, params, user, chart_query, db):
+
+        query, bind_params = jinjasql.prepare_query(chart_query,
                                                     {
                                                      "params": params,
                                                      "user": user
                                                     })
-        conn = connections[self.connection_name]
+        conn = connections[str(db)]
+        if conn.settings_dict['NAME'] == 'Athena':
+            conn = connect(driver_path=os.path.join(os.path.dirname(os.path.abspath(__file__)), 'athena-jdbc/AthenaJDBC41-1.0.0.jar'))
         with conn.cursor() as cursor:
             cursor.execute(query, bind_params)
-            cols = []
             rows = []
-            for desc in cursor.description:
-                # if column definition is provided
-                if hasattr(self, 'columns') and self.columns and self.columns.get(desc[0]):
-                    column = self.columns.get(desc[0])
-                    cols.append(
-                        Column(
-                           name=desc[0],
-                           data_type=column.get('data_type', 'string'),
-                           col_type=column.get('type', 'dimension')
-                        )
-                    )
-                else:
-                    cols.append(
-                        Column(name=desc[0],
-                               data_type='string', col_type='dimension')
-                    )
+            cols = [desc[0] for desc in cursor.description]
             for db_row in cursor:
                 row_list = []
-                for col_index, chart_col in enumerate(cols):
-                    value = db_row[col_index]
+                for col in db_row:
+                    value = col
                     if isinstance(value, str):
                         # If value contains a non english alphabet
                         value = value.encode('utf-8')
@@ -189,184 +189,443 @@ class SqlApiView(APIView):
                 rows.append(row_list)
         return Table(columns=cols, data=rows)
 
-# TODO: remove this circular dependency
-from .apigenerator import ApiGenerator
-
-
-class DatabaseView(APIView):
-    permission_classes = SquealySettings.get_default_permission_classes()
-    authentication_classes = [SessionAuthentication, BasicAuthentication]
-    authentication_classes.extend(SquealySettings.get_default_authentication_classes())
-
-    def get(self, request, *args, **kwargs):
-        try:
-            database_response = []
-            database = settings.DATABASES
-            for db in database:
-                database_response.append({
-                  'value': db,
-                  'label': database[db]['NAME']
-                })
-            return Response({'database': database_response})
-        except Exception as e:
-            return Response({'error': str(e)}, status.HTTP_400_BAD_REQUEST)
-
-    def post(self, request, *args, **kwargs):
-        connection_name = request.data.get('database', None)
-        conn = connections[connection_name['value']]
-        table = request.data.get('table', None)
-
-        if table:
-            query = 'select column_name, data_type from INFORMATION_SCHEMA.COLUMNS where table_name=%s'
-            with conn.cursor() as cursor:
-                cursor.execute(query, [table['value']])
-                column_metadata = []
-                for meta in cursor:
-                    column_metadata.append({
-                        'column': meta[0],
-                        'type': meta[1]
-                    })
-            return Response({'schema': column_metadata})
-        else:
-            table_schema = connection_name['label']
-            if conn.vendor == 'postgresql':
-                table_schema = 'public'
-            with conn.cursor() as cursor:
-                cursor.execute('select TABLE_NAME from information_schema.tables a where a.table_schema=%s',
-                               [table_schema])
-                tables = []
-                for table_names in cursor:
-                    tables.append({
-                                   'value': str(table_names[0]),
-                                   'label': str(table_names[0])
-                                })
-            return Response({'tables': tables})
-
-
-class YamlGeneratorView(APIView):
-    permission_classes = SquealySettings.get_default_permission_classes()
-    authentication_classes = [SessionAuthentication, BasicAuthentication]
-    authentication_classes.extend(SquealySettings.get_default_authentication_classes())
-
-    def post(self, request, *args, **kwargs):
-        try:
-            json_data = request.data.get('yamlData')
-            ApiGenerator._save_apis_to_file(json_data)
-            return Response({}, status.HTTP_200_OK)
-        except Exception as e:
-            return Response({'error': str(e)}, status.HTTP_400_BAD_REQUEST)
-
-    def get(self, request, *args, **kwargs):
-        try:
-            directory = SquealySettings.get('YAML_PATH', join(settings.BASE_DIR, 'yaml'))
-            if not os.path.exists(directory):
-                os.makedirs(directory)
-            file_name = SquealySettings.get('YAML_FILE_NAME', 'squealy-api.yaml')
-            full_path = join(directory,file_name)
-            if isfile(full_path):
-                with open(full_path,'r') as f:
-                    try:
-                        api_list = []
-                        api_data = yaml.safe_load_all(f)
-                        for api in api_data:
-                            api_list.append(api)
-                        return Response(api_list, status.HTTP_200_OK)
-                    except yaml.YAMLError as exc:
-                        return Response({'yaml error': str(exc)}, status.HTTP_400_BAD_REQUEST)
-                f.close()
-                return Response({}, status.HTTP_200_OK)
+    def _format(self, table, format, chart_type='Table'):
+        if format:
+            if format in ['table', 'json']:
+                formatter = SimpleFormatter()
             else:
-                return Response({'message': 'No api generated.'}, status.HTTP_204_NO_CONTENT)
+                formatter = eval(format)()
+            return formatter.format(table, chart_type)
+        return GoogleChartsFormatter().format(table, chart_type)
 
+
+class ChartViewPermission(BasePermission):
+
+    def has_permission(self, request, view):
+        chart_url = request.resolver_match.kwargs.get('chart_url')
+        chart = Chart.objects.get(url=chart_url)
+        return request.user.has_perm('squealy.can_view_' + str(chart.id)) or request.user.has_perm('squealy.can_edit_' + str(chart.id))
+
+
+class ChartView(APIView):
+    permission_classes = [ChartViewPermission]
+    authentication_classes = [SessionAuthentication, BasicAuthentication]
+
+    def get(self, request, chart_url=None, *args, **kwargs):
+        """
+        This is the API endpoint for executing the query and returning the data for a particular chart
+        """
+        params = request.GET.copy()
+        user = request.user
+        data = DataProcessor().fetch_chart_data(chart_url, params, user, params.get('chartType'))
+        return Response(data)
+
+    def post(self, request, chart_url=None, *args, **kwargs):
+        """
+        This is the endpoint for running and testing queries from the authoring interface
+        """
+        try:
+            params = request.data.get('params', {})
+            user = request.data.get('user', None)
+            data = DataProcessor().fetch_chart_data(chart_url, params, user, request.data.get('chartType'))
+            return Response(data)
         except Exception as e:
             return Response({'error': str(e)}, status.HTTP_400_BAD_REQUEST)
 
 
-class DynamicApiRouter(APIView):
-    permission_classes = SquealySettings.get_default_permission_classes()
+class ChartUpdatePermission(BasePermission):
+
+    def has_permission(self, request, view):
+        if request.method == 'POST' and request.data.get('chart'):
+            chart_data = request.data['chart']
+            if chart_data.get('id'):
+                # Chart update
+                return request.user.has_perm('squealy.can_edit_' + str(chart_data['id']))
+            else:
+                # Adding new chart
+                return request.user.has_perm('squealy.add_chart')
+        elif request.method == 'DELETE' and request.data.get('id'):
+            # Delete chart
+            return request.user.has_perm('squealy.delete_chart')
+        return True
+
+
+class ChartsLoaderView(APIView):
+    permission_classes = [ChartUpdatePermission]
     authentication_classes = [SessionAuthentication, BasicAuthentication]
-    authentication_classes.extend(SquealySettings.get_default_authentication_classes())
+
+    @staticmethod
+    def get_charts_swagger(request):
+        permitted_charts = []
+        charts = Chart.objects.all().prefetch_related('parameters')
+        for chart in charts:
+            if request.user.has_perm('squealy.can_edit_' + str(chart.id)):
+                permitted_charts.append(chart)
+            elif request.user.has_perm('squealy.can_view_' + str(chart.id)):
+                permitted_charts.append(chart)
+        return permitted_charts
 
     def get(self, request, *args, **kwargs):
-        url_path = request.get_full_path()
-        file_dir = SquealySettings.get('YAML_PATH', join(settings.BASE_DIR, 'yaml'))
-        filename = SquealySettings.get('YAML_FILE_NAME', 'squealy-api.yaml')
-        file_path = join(file_dir, filename)
-        urls = ApiGenerator.generate_urls_from_yaml(file_path)
-        response = url(r'', include(urls)).resolve(url_path.split('/squealy-apis/')[1].split('?')[0]).func(request)
-        return response
+        permitted_charts = []
+        charts = Chart.objects.order_by('id').all()
+        for chart in charts:
+            if request.user.has_perm('squealy.can_edit_' + str(chart.id)):
+                chart_data = ChartSerializer(chart).data
+                for index, parameter in enumerate(chart_data['parameters']):
+                    parameter['kwargs'] = chart.parameters.all()[index].kwargs
+                chart_data['can_edit'] = True
+                chart_data['options'] = chart.options
+                permitted_charts.append(chart_data)
+            elif request.user.has_perm('squealy.can_view_' + str(chart.id)):
+                chart_data = ChartSerializer(chart).data
+                for index, parameter in enumerate(chart_data['parameters']):
+                    parameter['kwargs'] = chart.parameters.all()[index].kwargs
+                chart_data['can_edit'] = False
+                chart_data['options'] = chart.options
+                permitted_charts.append(chart_data)
+
+        return Response(permitted_charts)
+
+    def delete(self, request):
+        """
+        To delete a chart
+        """
+        data = request.data
+        chart = Chart.objects.filter(id=data['id']).first()
+        if not chart:
+            raise ChartNotFoundException('A chart with id ' + data['id'] + ' was not found')
+        Permission.objects.filter(codename__in=['can_view_' + str(chart.id), 'can_edit_' + str(chart.id)]).delete()
+        Chart.objects.filter(id=data['id']).first().delete()
+        return Response({})
 
     def post(self, request):
-        file_dir = SquealySettings.get('YAML_PATH', join(settings.BASE_DIR, 'yaml'))
-        filename = SquealySettings.get('YAML_FILE_NAME', 'squealy-api.yaml')
-        file_path = join(file_dir, filename)
-        apis = []
-        if isfile(file_path):
-            with open(file_path) as f:
-                api_config = yaml.load_all(f)
-                for api in api_config:
-                    apis.append(api)
-        new_api = request.data
-        new_api['id'] = len(apis)+1
-        apis.append(new_api)
-        ApiGenerator._save_apis_to_file(apis)
-        return Response({}, status.HTTP_200_OK)
+        """
+        To save or update chart objects
+        """
+        try:
+            data = request.data['chart']
+            chart_name_regex = re.compile(r'[a-zA-Z0-9\-_]+$')
+            if not chart_name_regex.match(data['url']):
+                raise ChartNameInvalidException("""Only allowed special characters are hyphen(-) and underscore(_) """)
+            chart_object = Chart(
+                            id=data['id'],
+                            name=data['name'],
+                            url=data['url'],
+                            query=data['query'],
+                            type=data['type'],
+                            options=data['options'],
+                            database=data['database'],
+                            transpose=data['transpose']
+                        )
+            chart_object.save()
 
-@permission_classes(SquealySettings.get('Authoring_Interface_Permission_Classes', (IsAdminUser, )))
-class DashboardTemplateView(APIView):
+            # Create view/edit permissions
+            content_type = ContentType.objects.get_for_model(Chart)
+
+            # View permission
+            perm_id = None
+            perm = Permission.objects.filter(codename='can_view_' + str(chart_object.id)).first()
+            if perm:
+                perm_id = perm.id
+
+            view_perm = Permission(
+                id=perm_id,
+                codename='can_view_' + str(chart_object.id),
+                name='Can view ' + chart_object.url,
+                content_type=content_type,
+            )
+            view_perm.save()
+
+            # Edit permission
+            perm_id = None
+            perm = Permission.objects.filter(codename='can_edit_' + str(chart_object.id)).first()
+            if perm:
+                perm_id = perm.id
+
+            edit_perm = Permission(
+                id=perm_id,
+                codename='can_edit_' + str(chart_object.id),
+                name='Can edit ' + chart_object.url,
+                content_type=content_type,
+            )
+            edit_perm.save()
+
+            request.user.user_permissions.add(view_perm)
+            request.user.user_permissions.add(edit_perm)
+            
+            chart_id = chart_object.id
+            Chart.objects.all().prefetch_related('transformations', 'parameters', 'validations')
+
+            # Parsing transformations
+            transformation_ids = []
+            transformation_objects = []
+            existing_transformations = {transformation.name: transformation.id
+                                        for transformation in chart_object.transformations.all()}
+
+            with transaction.atomic():
+                for transformation in data['transformations']:
+                    id = existing_transformations.get(transformation['name'], None)
+                    transformation_object = Transformation(id=id, name=transformation['name'],
+                                                           kwargs=transformation.get('kwargs', None),
+                                                           chart=chart_object)
+                    transformation_objects.append(transformation_object)
+                    transformation_object.save()
+                    transformation_ids.append(transformation_object.id)
+            Transformation.objects.filter(chart=chart_object).exclude(id__in=transformation_ids).all().delete()
+
+            # Parsing Parameters
+            parameter_ids = []
+            existing_parameters = {param.name: param.id
+                                   for param in chart_object.parameters.all()}
+            with transaction.atomic():
+                for parameter in data['parameters']:
+                    id = existing_parameters.get(parameter['name'], None)
+                    parameter_object = Parameter(id=id, name=parameter['name'], data_type=parameter['data_type'],
+                                                 mandatory=parameter['mandatory'],
+                                                 default_value=parameter['default_value'],
+                                                 test_value=parameter['test_value'], chart=chart_object,
+                                                 type=parameter['type'],
+                                                 dropdown_api=parameter['dropdown_api'],
+                                                 order=parameter['order'],
+                                                 is_parameterized=parameter['is_parameterized'],
+                                                 kwargs=parameter['kwargs'])
+                    parameter_object.save()
+                    parameter_ids.append(parameter_object.id)
+            Parameter.objects.filter(chart=chart_object).exclude(id__in=parameter_ids).all().delete()
+            # Parsing validations
+            validation_ids = []
+            existing_validations = {validation.name: validation.id
+                                    for validation in chart_object.validations.all()}
+            with transaction.atomic():
+                for validation in data['validations']:
+                    id = existing_validations.get(validation['name'], None)
+                    validation_object = Validation(id=id, query=validation['query'], name=validation['name'],
+                                                   chart=chart_object)
+                    validation_object.save()
+                    validation_ids.append(validation_object.id)
+            Validation.objects.filter(chart=chart_object).exclude(id__in=validation_ids).all().delete()
+
+        except KeyError as e:
+            raise MalformedChartDataException("Key Error - " + str(e.args))
+        except IntegrityError as e:
+            raise DuplicateUrlException('A chart with this name already exists')
+
+        return Response(chart_id, status.HTTP_200_OK)
+
+
+class UserInformation(APIView):
     authentication_classes = [SessionAuthentication, BasicAuthentication]
-    authentication_classes.extend(SquealySettings.get_default_authentication_classes())
-
-    def get(self, request, api_name=None):
-        if not api_name:
-            raise DashboardNotFoundException('Parameter Required - dashboard api-name not provided in url')
-        file_dir = SquealySettings.get('YAML_PATH', join(settings.BASE_DIR, 'yaml'))
-        filename = SquealySettings.get('DASHBOARD_FILE_NAME', 'squealy_dashboard.yaml')
-        template_name = SquealySettings.get('DASHBOARD_TEMPLATE', 'squealy-dashboard.html')
-        file_path = join(file_dir, filename)
-        dashboard = {}
-        if isfile(file_path):
-            with open(file_path) as f:
-                dashboards_config = yaml.load_all(f)
-                for config in dashboards_config:
-                    if config.get('apiName', '').lower().replace(' ', '-') == api_name:
-                        dashboard = config
-        return render(request, template_name, {'dashboard': dashboard})
-
-class DashboardApiView(APIView):
-    permission_classes = SquealySettings.get_default_permission_classes()
-    authentication_classes = [SessionAuthentication, BasicAuthentication]
-    authentication_classes.extend(SquealySettings.get_default_authentication_classes())
 
     def get(self, request):
-        file_dir = SquealySettings.get('YAML_PATH', join(settings.BASE_DIR, 'yaml'))
-        dashboard_file_name = SquealySettings.get('dashboard_filename', 'squealy_dashboard.yaml')
-        dashboard_file_path = join(file_dir, dashboard_file_name)
-        dashboards = []
-        if isfile(dashboard_file_path):
-            with open(dashboard_file_path) as f:
-                for dashboard in yaml.load_all(f):
-                    dashboards.append(dashboard)
-        return Response(dashboards)
+        response = {}
+        user = request.user
+        response['name'] = user.username
+        response['email'] = user.email
+        response['first_name'] = user.first_name
+        response['last_name'] = user.last_name
+        response['can_add_chart'] = user.has_perm('squealy.add_chart')
+        response['can_delete_chart'] = user.has_perm('squealy.delete_chart')
+        response['isAdmin'] = user.is_superuser
+        return Response(response)
+
+
+class FilterUpdatePermission(BasePermission):
+    """
+    To check if user can add/edit/delete the filter
+    """
+    def has_permission(self, request, view):
+        if request.method == 'POST' and request.data.get('filter'):
+            filter_data = request.data['filter']
+            if filter_data.get('id'):
+                # Update the filter
+                return request.user.has_perm('squealy.can_edit_filter' + str(filter_data['id']))
+            else:
+                # Adding a new filter
+                return request.user.has_perm('squealy.add_filter')
+        elif request.method == 'DELETE' and request.data.get('id'):
+            # Delete current filter
+            return request.user.has_perm('squealy.delete_filter')
+        return True
+
+
+class FilterView(APIView):
+    permission_classes = [FilterUpdatePermission]
+    authentication_classes = [SessionAuthentication, BasicAuthentication]
+
+    def get(self, request, filter_url=None, *args, **kwargs):
+        """
+        This is the API endpoint for executing the query and returning the data for a particular Filter
+        """
+        try:
+            user = request.user
+            payload = request.GET.get("payload", None)
+            payload = json.loads(payload)
+            format_type = payload.get('format')
+            params = payload.get('params')
+            data = DataProcessor().fetch_filter_data(filter_url, params, format_type, user)
+            return Response(data)
+        except Exception as e:
+            return Response({'error': str(e)}, status.HTTP_400_BAD_REQUEST)
+
+
+class FilterLoaderView(APIView):
+    permission_classes = [FilterUpdatePermission]
+    authentication_classes = [SessionAuthentication, BasicAuthentication]
+
+    def get(self, request, *args, **kwargs):
+        """
+        This a API point to return list of filters. If user has edit permissions, updating in the data.
+        """
+        permitted_filters = []
+        filters = Filter.objects.order_by('id').all()
+        for filter in filters:
+            filter_data = FilterSerializer(filter).data
+            if request.user.has_perm('squealy.can_edit_filter' + str(filter.id)):
+                filter_data['can_edit'] = True
+            permitted_filters.append(filter_data)
+
+        return Response(permitted_filters)
+
+    def delete(self, request):
+        """
+        To delete a filter
+        """
+        data = request.data
+        try:
+            chart = Filter.objects.filter(id=data['id']).first()
+            Permission.objects.filter(codename__in=['can_edit_filter' + str(chart.id)]).delete()
+            Filter.objects.filter(id=data['id']).first().delete()
+        except Exception:
+            FilterNotFoundException('A filter with id' + data['id'] + 'was not found')
+        return Response({})
 
     def post(self, request):
-        dashboards = request.data
-        directory = SquealySettings.get('YAML_PATH', join(settings.BASE_DIR, 'yaml'))
+        """
+        To save or update chart objects
+        """
+        try:
+            data = request.data['filter']
+            filter_object = Filter(
+                            id=data['id'],
+                            name=data['name'],
+                            url=data['url'],
+                            query=data['query'],
+                            database=data['database']
+                        )
+            filter_object.save()
 
-        if not os.path.exists(directory):
-            os.makedirs(directory)
+            # Create edit permissions
+            content_type = ContentType.objects.get_for_model(Filter)
 
-        file_name = SquealySettings.get('dashboard_filename', 'squealy_dashboard.yaml')
-        full_path = join(directory, file_name)
-        with open(full_path, 'w+') as f:
-            f.write(yaml.safe_dump_all(dashboards, explicit_start=True, default_flow_style=False))
-        f.close()
-        return Response({}, status.HTTP_200_OK)
+            # Edit permission
+            perm_id = None
+            perm = Permission.objects.filter(codename='can_edit_filter' + str(filter_object.id)).first()
+            if perm:
+                perm_id = perm.id
+            Permission(
+                id=perm_id,
+                codename='can_edit_filter' + str(filter_object.id),
+                name='Can edit ' + filter_object.url,
+                content_type=content_type,
+            ).save()
+
+            filter_id = filter_object.id
+            Filter.objects.all().prefetch_related('parameters')
+
+            parameter_ids = []
+            existing_parameters = {param.name: param.id
+                                   for param in filter_object.parameters.all()}
+            with transaction.atomic():
+                for parameter in data['parameters']:
+                    id = existing_parameters.get(parameter['name'], None)
+                    parameter_object = FilterParameter(id=id,
+                                                 name=parameter['name'],
+                                                 default_value=parameter['default_value'],
+                                                 test_value=parameter['test_value'],
+                                                 filter=filter_object)
+                    parameter_object.save()
+                    parameter_ids.append(parameter_object.id)
+                FilterParameter.objects.filter(filter=filter_object).exclude(id__in=parameter_ids).all().delete()
+
+        except KeyError as e:
+            raise MalformedChartDataException("Key Error - " + str(e.args))
+        except IntegrityError as e:
+            raise DuplicateUrlException('A filter with this name already exists')
+
+        return Response(filter_id, status.HTTP_200_OK)
+
 
 @api_view(['GET'])
-@permission_classes(SquealySettings.get('Authoring_Interface_Permission_Classes', (IsAdminUser, )))
-def squealy_interface(request):
+def squealy_interface(request, *args, **kwargs):
     """
-    Renders the squealy authouring interface template
+    Renders the squealy authoring interface template
     """
     return render(request, 'index.html')
+
+def swagger_param_template(name, description, required, typeName, formatName):
+    template = {
+        "name": name,
+        "in": "query",
+        "description": description,
+        "required": required,
+        "type": typeName,
+        "format": formatName,
+    }
+    return template
+
+
+def make_parameters(param_list):
+    path_content_template = {
+        "get":
+            {
+                "tags": [
+                    "charts"
+                ],
+                "summary": "Charts API",
+                "description": "Add parameters according to the Query",
+                "operationId": "charts",
+                "produces": [
+                    "application/json"
+                ],
+                "parameters": param_list,
+                "responses": {
+                    "200": {
+                        "description": "successful operation"
+                    },
+                    "400": {
+                        "description": "Invalid status value"
+                    }
+                }
+            }
+    }
+    return path_content_template
+
+
+@api_view(['GET'])
+def swagger_json_api(request, *args, **kwargs):
+    host = request.META['HTTP_HOST']
+    swagger_json_template = SWAGGER_JSON_TEMPLATE
+    swagger_json_template["host"] = host
+    swagger_dict = SWAGGER_DICT
+    permitted_charts = ChartsLoaderView.get_charts_swagger(request)
+    for chart in permitted_charts:
+        new_key = "/squealy/" + chart.url
+        param_list = []
+        for parameter in chart.parameters.all():
+            name = ''
+            description = ''
+            required = ''
+            typeName = ''
+            formatName = ''
+
+            typeName, formatName = swagger_dict[parameter.data_type]
+            swagger_parameter_obj = swagger_param_template(parameter.name, " Please enter " + parameter.name, True,
+                                                           typeName, formatName)
+            param_list.append(swagger_parameter_obj)
+        swagger_json_template["paths"][new_key] = make_parameters(param_list)
+
+    return JsonResponse(swagger_json_template)
+
+
+def swagger(request):
+    return render(request, 'swagger.html')

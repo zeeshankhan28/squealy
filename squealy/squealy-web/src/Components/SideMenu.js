@@ -1,191 +1,234 @@
-import React, {Component, PropTypes} from 'react'
-import AceEditor from 'react-ace';
-import 'brace/mode/json';
-import 'brace/theme/tomorrow';
-import 'brace/ext/language_tools';
-
-import Transformations from './Transformations'
-import DatabaseDescription from './DatabaseDescription'
+import React, { Component, PropTypes } from 'react'
+import Select from 'react-select'
+import chartIcon from './../images/charts_icon.png'
+import filterIcon from './../images/filter_icon.png'
+import dashboardIcon from './../images/dashboard_icon.png'
+import AddWidgetModal from './AddWidgetModal'
 
 export default class SideMenu extends Component {
-  constructor(props) {
-    super(props)
+  constructor() {
+    super()
     this.state = {
-      authentication_classes:[],
-      permission_classes: []
-    }
-  }
-
-  componentWillReceiveProps(nextProps) {
-    if(nextProps.selectedAPIDefinition.permission_classes!=this.props.permission_classes || nextProps.selectedAPIDefinition.authentication_classes!=this.props.authentication_classes) {
-      this.setState({authentication_classes: nextProps.selectedAPIDefinition.authentication_classes,
-        permission_classes: nextProps.selectedAPIDefinition.permission_classes
-      })
-    }
-  }
-
-  updateApiAccess = (type, key, value) => {
-    let stateCopy = this.state[type].slice()
-    stateCopy[key] = value
-    this.setState({[type] :stateCopy})
-  }
-
-  static propTypes = {
-    apiParams: PropTypes.object.isRequired,
-    onChangeTestData: PropTypes.func.isRequired
-  }
-
-  updateKey = (e, currentKey, type) => {
-    let apiParams = Object.assign({}, this.props.apiParams)
-    if (e.target.value !== currentKey) {
-      if (apiParams[type].hasOwnProperty(e.target.value)) {
-        console.error('Parameter key can not be repeated', apiParams[type])
-      } else {
-        if (apiParams && apiParams[type].hasOwnProperty(currentKey)) {
-          apiParams[type][e.target.value] = apiParams[type][currentKey]
-          delete apiParams[type][currentKey]
-          this.props.onChangeTestData(apiParams)
-        } else {
-          console.error('Something went wrong! Not able to find key ', currentKey, ' in apiParams')
-        }
+      showLeftNavContextMenu: false,
+      clickedChartIndex: null,
+      clickedFilterIndex: null,
+      showAddChartModal: false,
+      showAddFilterModal: false,
+      chartEditMode: false,
+      addChartModalHeading:'Add new chart',
+      leftMenuPosition: {
+        top: 0,
+        left: 0
       }
     }
   }
 
-  updateValue = (e, currentKey, type) => {
-    let apiParams = Object.assign({}, this.props.apiParams)
-
-    if (apiParams.hasOwnProperty(type) && apiParams[type][currentKey] !== e.target.value) {
-      if (apiParams[type].hasOwnProperty(currentKey)) {
-        apiParams[type][currentKey] = e.target.value
-        this.props.onChangeTestData(apiParams)
-      } else {
-        console.error('Something went wrong! Not able to find key ', currentKey, ' in apiParams')
-      }
-    }
+/*
+  //FIXME: Commenting this code as facing some bubbling issues. Need to fix it. 
+  componentDidMount () {
+    document.body.addEventListener('click', this.hideLeftMenu);
   }
 
-  addNewParam = (type) => {
-    let apiParams = Object.assign({}, this.props.apiParams)
-    if (apiParams && !apiParams.hasOwnProperty(type)) {
-      apiParams[type] = {}
-    }
-    apiParams[type][''] = ''
-    this.props.onChangeTestData(apiParams)
+  componentWillUnmount () {
+    document.body.removeEventListener('click', this.hideLeftMenu);
+  }
+*/
+
+  hideLeftMenu = (e) => {
+    this.setState({
+      clickedFilterIndex: null,
+      clickedChartIndex: null,
+      showLeftNavContextMenu: false,
+      showLeftNavFilterContextMenu: false
+    })
   }
 
-  removeParam = (key, type) => {
-    let apiParams = Object.assign({}, this.props.apiParams)
-    delete apiParams[type][key]
-    this.props.onChangeTestData(apiParams)
+  toggleLeftMenu = (e, index, contextMenuStateKey, clickedIndexStateKey) => {
+    e.preventDefault()
+    //e.pageY calculating height from ul.
+    //FIXME: Hardcoded 10px to show menu at accurate position. Need to check why do we need to add it?
+    let leftMenuPosition = {
+      top: e.pageY - (this.refs.chartListUl ? this.refs.chartListUl.offsetTop : 0) - 10,
+      left: e.pageX
+    },
+    flag = (index !== this.state[clickedIndexStateKey]) || !this.state[contextMenuStateKey]
+
+    this.setState({
+      [clickedIndexStateKey]: flag ? index : null,
+      [contextMenuStateKey]: flag,
+      leftMenuPosition: leftMenuPosition
+    })
   }
 
-  render () {
+  showChartDetailsModal = (action, showModalState) => {
+    this.setState({ 
+      [showModalState]: true,
+      showLeftNavContextMenu: false,
+      showLeftNavFilterContextMenu: false,
+      chartEditMode: action === 'EDIT' ? true : false
+    })
+  }
+
+  selectChartHandler = (index, action) => {
+    this.setState({showLeftNavContextMenu: false, clickedChartIndex: null})
+    this.props.chartSelectionHandler(index)
+  }
+
+  selectFilterHandler = (index, action) => {
+    this.setState({showLeftNavContextMenu: false, clickedChartIndex: null})
+    this.props.filterSelectionHandler(index)
+  }
+
+  closeModal = () => {
+    this.setState({
+      showAddChartModal: false,
+      clickedChartIndex: null,
+      showAddFilterModal: false
+    })
+  }
+
+  render() {
     const {
-      apiParams,
-      onChangeTestData,
-      setApiAccess,
-      dbUpdationHandler,
-      selectedAPIDefinition
+      clickedChartIndex,
+      showLeftNavContextMenu,
+      leftMenuPosition,
+      showAddChartModal,
+      showAddFilterModal,
+      chartEditMode,
+      clickedFilterIndex,
+      showLeftNavFilterContextMenu
+    } = this.state
+
+    const {
+      charts,
+      chartAdditionHandler,
+      filterAdditionHandler,
+      selectedChartIndex,
+      selectedFilterIndex,
+      chartSelectionHandler,
+      chartDeletionHandler,
+      selectedChartChangeHandler,
+      filterDeletionHandler,
+      selectedFilterChangeHandler,
+      filterSelectionHandler,
+      userInfo,
+      databases,
+      filters
     } = this.props
-    return(
-      <div className="parameters-value-wrapper">
-        <DatabaseDescription dbUpdationHandler={dbUpdationHandler}/>
-        <h2>Test API Parameters: </h2>
-        <table className="table table-bordered">
-          <thead>
-            <tr>
-              <th>Key</th>
-              <th>Value</th>
-              <th onClick={() => this.addNewParam('params')}><i className="fa fa-plus"></i></th>
-            </tr>
-          </thead>
-          <tbody>
+
+    let listClassName = ''
+    
+    return (
+      <div className="full-height">
+        <div className="chart-list side-menu-upper">
+          <div className="side-menu-heading">
+            <img src={chartIcon} alt="chart-icon"/>
+            <span>Charts</span>
             {
-              apiParams.hasOwnProperty('params') ?
-                Object.keys(apiParams.params).map((key) => {
-                  return (
-                    <tr key={key}>
-                      <td> <input defaultValue={key} onBlur={(e) => this.updateKey(e, key, 'params')} placeholder='Enter Key' /></td>
-                      <td> <input defaultValue={apiParams.params[key]} onBlur={(e) => this.updateValue(e, key, 'params')} placeholder="Enter Value" /></td>
-                      <td onClick={() => this.removeParam(key, 'params')}><i className="fa fa-trash"/></td>
-                    </tr>
-                  )
-                })
+              (userInfo.can_add_chart) ?
+                <i onClick={() => this.showChartDetailsModal('ADD', 'showAddChartModal')} className="fa fa-plus-circle add-new" aria-hidden="true"></i>
                 : null
             }
-          </tbody>
-        </table>
-        <h2>Test User Parameters: </h2>
-        <table className="table table-bordered">
-          <thead>
-            <tr>
-              <th>Key</th>
-              <th>Value</th>
-              <th onClick={() => this.addNewParam('session')}><i className="fa fa-plus"></i></th>
-            </tr>
-          </thead>
-          <tbody>
+          </div>
+          <ul ref="chartListUl" id="chart-list-ul">
             {
-              apiParams.hasOwnProperty('session') ?
-                Object.keys(apiParams.session).map((key) => {
-                  return (
-                    <tr key={key}>
-                      <td> <input defaultValue={key} onBlur={(e) => this.updateKey(e, key, 'session')} placeholder='Enter Key' /></td>
-                      <td> <input defaultValue={apiParams.session[key]} onBlur={(e) => this.updateValue(e, key, 'session')} placeholder='Enter Value' /> </td>
-                      <td onClick={() => this.removeParam(key, 'session')}><i className="fa fa-trash"/></td>
-                    </tr>
-                  )
-                })
-                : null
+              charts.map((chart, index) => {
+                listClassName = (index === selectedChartIndex) ? 'selected-chart' : ''
+                listClassName += (clickedChartIndex === index) ? ' right-button-clicked' : ''
+                return (
+                  <li onClick={() => this.selectChartHandler(index)} key={index}
+                    className={listClassName}
+                    onContextMenu={(e) => this.toggleLeftMenu(e, index, 'showLeftNavContextMenu', 'clickedChartIndex')}>
+                    <span title={chart.name}>{chart.name}</span>
+                  </li>)
+              })
             }
-          </tbody>
-        </table>
-        <h2>Add Permission Classes: </h2>
-        <table className="table table-bordered">
-          <thead>
-            <tr>
-              <th>DRF Permission Class Name</th>
-              <th onClick={() => setApiAccess(null,'','permission_classes','add')}><i className="fa fa-plus"></i></th>
-            </tr>
-          </thead>
-          <tbody>
             {
-              this.state.hasOwnProperty('permission_classes') ?
-                this.state.permission_classes.map((value, key) => {
-                  return (
-                    <tr key={key}>
-                      <td> <input value={value} onChange={(e)=>{this.updateApiAccess('permission_classes',key,e.target.value)}} onBlur={() => setApiAccess(key, this.state.permission_classes[key], 'permission_classes', 'update')} placeholder='Enter Class Name' /> </td>
-                      <td onClick={() => setApiAccess(key, '', 'permission_classes', 'del')}><i className="fa fa-trash"/></td>
-                    </tr>
-                  )
-                })
+              showLeftNavContextMenu && this.props.charts.length > clickedChartIndex && this.props.charts[clickedChartIndex].can_edit && 
+                <ul className="left-nav-menu" style={leftMenuPosition} 
+                  onContextMenu={(e)=> {e.preventDefault()}}>
+                  <li onClick={() => this.showChartDetailsModal('EDIT', 'showAddChartModal')}>Rename Chart 
+                    <i className="fa fa-pencil"/></li>
+                  {
+                    (userInfo.can_delete_chart) && <li className='delete-chart' onClick={() => 
+                      this.props.chartDeletionHandler(clickedChartIndex, this.hideLeftMenu)}>
+                    Delete Chart<i className="fa fa-trash-o"/></li>
+                  }
+                  <li className="close-option" onClick={this.hideLeftMenu}>Close</li>
+                </ul>
+            }
+          </ul>
+        </div>
+        <div className="chart-list side-menu-lower">
+          <div className="side-menu-heading">
+            <img src={filterIcon} alt="filter-icon"/>
+            <span>Dropdown Filters</span>
+            {
+              (userInfo.can_add_chart) ?
+                <i onClick={() => this.showChartDetailsModal('ADD', 'showAddFilterModal')} className="fa fa-plus-circle add-new" aria-hidden="true"></i>
                 : null
             }
-          </tbody>
-        </table>
-        <h2>Add Authentication Classes: </h2>
-        <table className="table table-bordered">
-          <thead>
-            <tr>
-              <th>DRF Auth Class Name</th>
-              <th onClick={() => setApiAccess(null, '', 'authentication_classes', 'add')}><i className="fa fa-plus"></i></th>
-            </tr>
-          </thead>
-          <tbody>
-            { this.state.authentication_classes?
-                this.state.authentication_classes.map((value, key) => {
-                  return (
-                    <tr key={key}>
-                      <td> <input value={value} onChange={(e)=>{this.updateApiAccess('authentication_classes',key,e.target.value)}} onBlur={() => setApiAccess(key, this.state.authentication_classes[key], 'authentication_classes', 'update')} placeholder='Enter Class Name' /> </td>
-                      <td onClick={() => setApiAccess(key, '', 'authentication_classes', 'del')}><i className="fa fa-trash"/></td>
-                    </tr>
-                  )
-                })
-                : null
+          </div>
+          <ul ref="filterListUl" id="filter-list-ul">
+            {
+              filters.map((filter, index) => {
+                listClassName = (index === selectedFilterIndex) ? 'selected-chart' : ''
+                listClassName += (clickedFilterIndex === index) ? ' right-button-clicked' : ''
+                return (
+                  filter.can_edit &&
+                  <li onClick={() => this.selectFilterHandler(index)} key={index}
+                    className={listClassName}
+                    onContextMenu={(e) => this.toggleLeftMenu(e, index, 
+                      'showLeftNavFilterContextMenu',
+                      'clickedFilterIndex')}>
+                    <span title={filter.name}>{filter.name}</span>
+                  </li>)
+              })
             }
-          </tbody>
-        </table>
+          </ul>
+        </div>
+        {
+          showLeftNavFilterContextMenu && this.props.filters.length > clickedFilterIndex && this.props.filters[clickedFilterIndex].can_edit && 
+            <ul className="left-nav-menu" style={leftMenuPosition} 
+              onContextMenu={(e)=> {e.preventDefault()}}>
+              <li onClick={() => this.showChartDetailsModal('EDIT', 'showAddFilterModal')}>Rename Filter 
+                <i className="fa fa-pencil"/></li>
+              {
+                (userInfo.can_delete_chart) &&
+                <li className='delete-chart' onClick={() => 
+                  this.props.filterDeletionHandler(clickedFilterIndex, this.hideLeftMenu)}>
+                  Delete Filter<i className="fa fa-trash-o"/>
+                </li>
+              }
+              <li className="close-option" onClick={this.hideLeftMenu}>Close</li>
+            </ul>
+        }
+        <AddWidgetModal
+          helpText=''
+          widgetData={charts}
+          modalId={'add-new-chart'}
+          modalHeading={chartEditMode ? 'Edit Chart' : 'Add Chart'}
+          showModal={showAddChartModal}
+          closeModal={this.closeModal}
+          selectedWidgetHandler={selectedChartChangeHandler}
+          widgetAdditionHandler={chartAdditionHandler}
+          editMode={chartEditMode}
+          selectedWidgetIndex={clickedChartIndex}
+          databases={databases}
+        />
+        <AddWidgetModal
+          helpText=''
+          widgetData={filters}
+          modalId={'add-new-filter'}
+          modalHeading={chartEditMode ? 'Edit Filter' : 'Add Filter'}
+          showModal={showAddFilterModal}
+          closeModal={this.closeModal}
+          selectedWidgetHandler={selectedFilterChangeHandler}
+          widgetAdditionHandler={filterAdditionHandler}
+          editMode={chartEditMode}
+          selectedWidgetIndex={clickedFilterIndex}
+          databases={databases}
+        />
       </div>
     )
   }

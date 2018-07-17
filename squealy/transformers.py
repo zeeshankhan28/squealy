@@ -1,4 +1,8 @@
-from .table import Column, Table
+from collections import OrderedDict
+
+from django.utils.datastructures import OrderedSet
+
+from .table import Table
 
 
 class TableTransformer(object):
@@ -10,7 +14,6 @@ class TableTransformer(object):
 
 
 class Transpose(TableTransformer):
-    # Fixme: Introduce Dimensions
     def transform(self, table):
         """Converts rows into columns and vice versa
         1. The first column in the original
@@ -18,45 +21,49 @@ class Transpose(TableTransformer):
         2. The column names in the original
            become the values in the first column in the transformed
         """
-        column_names = [c.name for c in table.columns]
+        column_names = table.columns
         table.data.insert(0, column_names)
         transposed = list(zip(*table.data))
 
         new_table = Table()
         if transposed:
-            new_table.columns = [Column(c, "string", "dimension") for c in transposed[0]]
+            new_table.columns = list(transposed[0])
             del transposed[0]
-        new_table.data = transposed
+        new_table.data = [list(row) for row in transposed]
         return new_table
 
 
 class Split(TableTransformer):
 
-    def transform(self, table, pivot_column):
+    def transform(self, table, pivot_column, metric_column, x_axis_column):
         """Returns pivot table based on the pivot column"""
         # NOTE:: Split transformation is for single metric. Future implementation for multiple metric
         # Get index of the pivot column
-        pivot_column_index = table.columns_to_str().index(pivot_column)
+        pivot_column_index = table.columns.index(pivot_column)
         # Find the index of the metric column
-        metric_column_index = table.get_col_type().index("metric")
-        new_split_columns = set()
+        metric_column_index = table.columns.index(metric_column)
+        new_split_columns = OrderedSet([])
         # Get values of new columns
         for data in table.data:
             new_split_columns.add(data[pivot_column_index])
         new_split_columns = list(new_split_columns)
+
         # Set the metric for the new columns
+        grouping_column_index = x_axis_column
+        new_split_data = OrderedDict()
+        new_data = []
         for index,data in enumerate(table.data):
             temp_metric = data[metric_column_index]
-            # Delete the metric column data as metric would be displayed in the new columns
-            del table.data[index][metric_column_index]
             temp_pivot_value = data[pivot_column_index]
-            # Delete the pivot column data as it has been split into multiple columns
-            del table.data[index][pivot_column_index]
-            table.data[index] = table.data[index][:pivot_column_index] + [(temp_metric if i==new_split_columns.index(temp_pivot_value) else '-') for i in range(len(new_split_columns))] + table.data[index][pivot_column_index:]
-        # Delete the metric and pivot column
-        del table.columns[metric_column_index]
-        del table.columns[pivot_column_index]
-        table.columns = table.columns[:pivot_column_index] + [Column(column,'string','dimension') for column in new_split_columns] + table.columns[pivot_column_index:]
+            temp_grouping_column = data[grouping_column_index]
+            if not new_split_data.get(temp_grouping_column):
+                new_split_data[temp_grouping_column] = ['-']*len(new_split_columns)
+            new_split_data[temp_grouping_column][new_split_columns.index(temp_pivot_value)] = temp_metric
+
+        for key in new_split_data:
+            new_data.append([key] + new_split_data[key])
+        table.columns = [table.columns[x_axis_column]] + [column for column in new_split_columns]
+        table.data = new_data
         return table
 
 
@@ -66,7 +73,7 @@ class Merge(TableTransformer):
         """
         Returns table objects with merged columns and data
         """
-        cur_columns = table.columns_to_str()
+        cur_columns = table.columns
         columns_to_merge_index = [cur_columns.index(column) for column in columns_to_merge]
         data = []
         for index,row in enumerate(table.data):
@@ -85,7 +92,7 @@ class Merge(TableTransformer):
         new_columns = []
 
         for column in table.columns:
-            if column.name not in columns_to_merge:
+            if column not in columns_to_merge:
                 new_columns.append(column)
-        new_columns.append(Column(new_column_name, 'string', 'dimension'))
+        new_columns.append(new_column_name)
         return Table(new_columns, data)
