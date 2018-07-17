@@ -167,7 +167,7 @@ def send_emails():
             msg_root = MIMEMultipart('related')
             msg_root['Subject'] = scheduled_report.subject
             msg_root['From'] = email_from
-            msg_root['To'] = ' '.join(recipients)
+            msg_root['To'] = ', '.join(recipients)
             msg_alternative = MIMEMultipart('alternative')
             msg_root.attach(msg_alternative)
             msg_text = MIMEText(scheduled_report.subject)
