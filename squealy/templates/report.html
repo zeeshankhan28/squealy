@@ -1,5 +1,4 @@
-if {% if charts %}
-	{% for chart in charts %}
+{% if chart %}
 	<h4 class="table-heading" style="width: 100%;background-color: #008dc1;color: #ffffff;margin: 0;padding: 15px;text-align: left;text-transform: capitalize;">{{ chart.name }}</h4>
 		<div class="table-scroll" style="overflow: auto;max-height: 342px;">
 			<table style="width: 100%;border-spacing: 0;display: table;border-spacing: 2px;border-color: grey;border-collapse: collapse;">
@@ -24,7 +23,6 @@ if {% if charts %}
 			</table>
 		</div>
 
-		{% endfor %}
 {% else %}
 	<p>Nothing to show</p>
 {% endif %}
