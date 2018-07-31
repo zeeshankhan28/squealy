@@ -75,7 +75,7 @@ export default class ViewOnlyResults extends Component {
       payloadObj.chartType = propsData.chart.type
     }
 
-    postApiRequest(DOMAIN_NAME + 'squealy/' + propsData.chart.url + '/', payloadObj,
+    postApiRequest(DOMAIN_NAME + 'squealy/chart-api/' + propsData.chart.url + '/', payloadObj,
       this.onSuccessTest, this.onErrorTest, null)
     
     this.setState({ payloadObj: payloadObj }, () => {
@@ -83,14 +83,14 @@ export default class ViewOnlyResults extends Component {
       //Get dropdown option data 
       parameters.forEach((param) => {
         if (param.data_type === 'dropdown' && !param.is_parameterized)  {
-          getApiRequest(DOMAIN_NAME + 'filter-api/' + param.dropdown_api + '/', {format: 'json'},
+          getApiRequest(DOMAIN_NAME + 'squealy/filter-api/' + param.dropdown_api + '/', {format: 'json'},
               (response) => this.onSuccessFilterGet(response, {'name': param.name, 'url': param.dropdown_api}),
               this.onErrorTest, null)
         } else if (param.data_type === 'dropdown' && param.is_parameterized) {
           //Passing parameter values 
           finalPayloadObj = this.getPayloadObject(param.dropdown_api, payloadObj)
           finalPayloadObj['format'] = 'json'
-          getApiRequest(DOMAIN_NAME + 'filter-api/' + param.dropdown_api + '/', finalPayloadObj,
+          getApiRequest(DOMAIN_NAME + 'squealy/filter-api/' + param.dropdown_api + '/', finalPayloadObj,
               (response) => this.onSuccessFilterGet(response, {'name': param.name, 'url': param.dropdown_api}),
               this.onErrorTest, null)
         }
@@ -137,7 +137,7 @@ export default class ViewOnlyResults extends Component {
         flag = true
         finalPayloadObj = this.getPayloadObject(param.dropdown_api, updatedPayloadObj)
         finalPayloadObj['format'] = 'json'
-        getApiRequest(DOMAIN_NAME + 'filter/' + param.dropdown_api + '/', finalPayloadObj,
+        getApiRequest(DOMAIN_NAME + 'squealy/filter/' + param.dropdown_api + '/', finalPayloadObj,
             (response) => this.onSuccessFilterGet(response, {'name': param.name, 'url': param.dropdown_api}, true),
             this.onErrorTest, null)
       }
@@ -145,7 +145,7 @@ export default class ViewOnlyResults extends Component {
     //If none param is parameterized, update the payload and chart data
     if (!flag) {
       this.updateUrl()
-      postApiRequest(DOMAIN_NAME + 'squealy/' + this.props.chart.url + '/', this.state.payloadObj,
+      postApiRequest(DOMAIN_NAME + 'squealy/chart-api/' + this.props.chart.url + '/', this.state.payloadObj,
         this.onSuccessTest, this.onErrorTest, 'table')
     }
   }
@@ -176,7 +176,7 @@ export default class ViewOnlyResults extends Component {
       () => 
         { 
           this.updateUrl()
-          postApiRequest(DOMAIN_NAME + 'squealy/' + this.props.chart.url + '/', this.state.payloadObj,
+          postApiRequest(DOMAIN_NAME + 'squealy/chart-api/' + this.props.chart.url + '/', this.state.payloadObj,
           this.onSuccessTest, this.onErrorTest, 'table')
         })
   }
@@ -198,7 +198,7 @@ export default class ViewOnlyResults extends Component {
       payloadObj.params[obj.name] = response.data[0][0]  
       this.setState({ payloadObj: payloadObj }, () => {
         this.updateUrl()
-        postApiRequest(DOMAIN_NAME + 'squealy/' + this.props.chart.url + '/', payloadObj,
+        postApiRequest(DOMAIN_NAME + 'squealy/chart-api/' + this.props.chart.url + '/', payloadObj,
           this.onSuccessTest, this.onErrorTest, 'table')
       })
     }

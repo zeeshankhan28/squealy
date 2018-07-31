@@ -17,7 +17,7 @@ export default class ValidationsModal extends Component {
 
   render () {
     const { selectedChartChangeHandler, chartUrl } = this.props,
-      url = baseUrl() + chartUrl+'/view'
+      url = baseUrl()+'squealy/' + chartUrl+'/view'
 
     const modalContent =
     <div className="share-modal">

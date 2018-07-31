@@ -31,10 +31,10 @@ export default class AuthoringInterfaceContainer extends Component {
   componentDidMount() {
     if (this.state.selectedChartIndex === null && this.state.selectedFilterIndex === null) {
       this.setState({ selectedChartIndex: 0, selectedFilterIndex: null }, () => {
-        getApiRequest(DOMAIN_NAME + 'charts/', null,
+        getApiRequest(DOMAIN_NAME + 'squealy/charts/', null,
           (response) => { this.setState({isLoading: this.state.isLoading + 1}, () => this.loadInitialCharts(response, 'chart'))},
           (error) => { this.setState({isLoading: this.state.isLoading + 1}), () => this.loadInitialCharts(error, 'chart')}, null)
-        getApiRequest(DOMAIN_NAME + 'user/', null,
+        getApiRequest(DOMAIN_NAME + 'squealy/user/', null,
           (data) => {
             this.setState({
               userInfo: data,
@@ -42,7 +42,7 @@ export default class AuthoringInterfaceContainer extends Component {
             })
           },
           (error) => { this.setState({isLoading: this.state.isLoading + 1}), () => console.error(error)}, null)
-        getApiRequest(DOMAIN_NAME + 'databases/', null,
+        getApiRequest(DOMAIN_NAME + 'squealy/databases/', null,
           (data) => {
             this.setState({
               databases: data.databases,
@@ -50,7 +50,7 @@ export default class AuthoringInterfaceContainer extends Component {
             })
           },
           (error) => { this.setState({isLoading: this.state.isLoading + 1}), () => console.error(error)}, null)
-        getApiRequest(DOMAIN_NAME + 'filters/', null,
+        getApiRequest(DOMAIN_NAME + 'squealy/filters/', null,
           (response) => { this.setState({isLoading: this.state.isLoading + 1}, () => this.loadInitialCharts(response, 'filter'))},
           (error) => { this.setState({isLoading: this.state.isLoading + 1}), this.loadInitialCharts(error, 'filter')}, null)
       })
@@ -76,7 +76,7 @@ export default class AuthoringInterfaceContainer extends Component {
     let chart = charts[chartIndex]
     if (chart.id) {
       this.setState({ 'saveInProgress': true },
-        postApiRequest(DOMAIN_NAME + 'charts/', { 'chart': chart },
+        postApiRequest(DOMAIN_NAME + 'squealy/charts/', { 'chart': chart },
           (response) => this.onAPISaved(response, 'charts', charts, onSuccess),
           (error) => this.onAPISaveError(error, onFailure), null)
       )
@@ -87,7 +87,7 @@ export default class AuthoringInterfaceContainer extends Component {
     let filter = filters[index]
     if (filter.id) {
       this.setState({ 'saveInProgress': true },
-        postApiRequest(DOMAIN_NAME + 'filters/', { 'filter': filter },
+        postApiRequest(DOMAIN_NAME + 'squealy/filters/', { 'filter': filter },
           (response) => this.onAPISaved(response, 'filters', filters, onSuccess),
           (error) => this.onAPISaveError(error, onFailure), null)
       )
@@ -190,14 +190,14 @@ export default class AuthoringInterfaceContainer extends Component {
 
   saveNewChart = (newChart, onSuccess, onFailure) => {
     this.setState({ 'saveInProgress': true },
-      postApiRequest(DOMAIN_NAME + 'charts/', { 'chart': newChart },
+      postApiRequest(DOMAIN_NAME + 'squealy/charts/', { 'chart': newChart },
         (id) => this.onNewAPISaved(newChart, id, 'selectedChartIndex', 'charts', onSuccess), (err) => this.onAPISaveError(err, onFailure), null)
     )
   }
 
   saveNewFilter = (newFilter, onSuccess, onFailure) => {
     this.setState({ 'saveInProgress': true },
-      postApiRequest(DOMAIN_NAME + 'filters/', { 'filter': newFilter },
+      postApiRequest(DOMAIN_NAME + 'squealy/filters/', { 'filter': newFilter },
         (id) => this.onNewAPISaved(newFilter, id, 'selectedFilterIndex', 'filters', onSuccess), (err) => this.onAPISaveError(err, onFailure), null)
     )
   }
@@ -280,7 +280,7 @@ export default class AuthoringInterfaceContainer extends Component {
     //Only edit mode is valid for dropdown filters api
     canEditUrl = (type === 'filter' || (type === 'chart' && !charts[selectedChartIndex])) ? 'edit' : canEditUrl
 
-    newUrl = '/' + prefix + '/' + selectedData.name + '/' + canEditUrl + window.location.search
+    newUrl = '/squealy/' + prefix + '/' + selectedData.name + '/' + canEditUrl + window.location.search
     //currentChartMode will be null for filters to avoid manipulating view by changing url.
 
     accessMode = (type === 'chart') ?
@@ -369,7 +369,7 @@ export default class AuthoringInterfaceContainer extends Component {
       if (this.state.resultSectionActiveKey == 1) {
         payloadObj['chartType'] = 'Table'
       }
-      postApiRequest(DOMAIN_NAME+'squealy/'+selectedChart.url+'/', payloadObj,
+      postApiRequest(DOMAIN_NAME+'squealy/chart-api/'+selectedChart.url+'/', payloadObj,
                       this.onSuccessTest, this.onErrorTest, callback)
     }
   }
@@ -383,7 +383,7 @@ export default class AuthoringInterfaceContainer extends Component {
       tabLoaderActive = 'dataLoading'
     }
     this.setState({ resultSectionActiveKey: key, [tabLoaderActive]: true })
-    postApiRequest(DOMAIN_NAME + 'squealy/' + selectedChart.url + '/', payloadObj,
+    postApiRequest(DOMAIN_NAME + 'squealy/chart-api/' + selectedChart.url + '/', payloadObj,
       this.onSuccessTest, this.onErrorTest, callback)
   }
 
@@ -392,7 +392,7 @@ export default class AuthoringInterfaceContainer extends Component {
     let payloadObj = formatTestParameters(selectedFilter.parameters, 'name', 'test_value')
     payloadObj.format = 'GoogleChartsFormatter'
 
-    getApiRequest(DOMAIN_NAME+'filter-api/'+selectedFilter.url+'/', payloadObj,
+    getApiRequest(DOMAIN_NAME+'squealy/filter-api/'+selectedFilter.url+'/', payloadObj,
                     this.onSuccessFilterTest, this.onErrorFilterTest, callback)
   }
 
@@ -456,7 +456,7 @@ export default class AuthoringInterfaceContainer extends Component {
       data = this.state.charts
       type = 'chart'
 
-      const newUrl = '/' + type + '/' + data[selectedIndex].name + '/' + (val ? 'view' : 'edit/')
+      const newUrl = '/squealy/' + type + '/' + data[selectedIndex].name + '/' + (val ? 'view' : 'edit/')
       window.history.replaceState('', '', newUrl);
       this.setState({ currentChartMode: !val })
     }
