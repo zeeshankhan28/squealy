@@ -1,6 +1,6 @@
 import os
 import re
-
+import pyodbc
 from django.contrib.auth.models import Permission
 from django.contrib.contenttypes.models import ContentType
 from django.db import connections
@@ -104,7 +104,6 @@ class DataProcessor(object):
         """
         Process and return the result after executing the chart query
         """
-
         # Parse Parameters
         parameter_definitions = chart.parameters.all()
         if parameter_definitions:
@@ -114,7 +113,6 @@ class DataProcessor(object):
         validations = chart.validations.all()
         if validations:
             self._run_validations(params, user, validations, chart.database)
-
         # Execute the Query, and return a Table
         table = self._execute_query(params, user, chart.query, chart.database)
 
@@ -124,7 +122,6 @@ class DataProcessor(object):
 
         # Format the table according to google charts / highcharts etc
         data = self._format(table, chart.format, chart_type)
-
         return data
 
     def _parse_params(self, params, parameter_definitions):
@@ -143,12 +140,12 @@ class DataProcessor(object):
 
             # Formatting parameters
             parameter_type_str = param.data_type
-
             #FIXME: kwargs should not come as unicode. Need to debug the root cause and fix it.
-            if isinstance(param.kwargs, unicode):
-                kwargs = ast.literal_eval(param.kwargs)
-            else:
-                kwargs = param.kwargs
+            # if isinstance(param.kwargs, unicode):
+            #     print("unicode")
+            #     kwargs = ast.literal_eval(param.kwargs)
+            # else:
+            kwargs = param.kwargs
 
             parameter_type = eval(parameter_type_str.title())
             if params.get(param.name):
@@ -163,7 +160,6 @@ class DataProcessor(object):
         pass
 
     def _execute_query(self, params, user, chart_query, db):
-
         query, bind_params = jinjasql.prepare_query(chart_query,
                                                     {
                                                      "params": params,
@@ -172,6 +168,18 @@ class DataProcessor(object):
         conn = connections[str(db)]
         if conn.settings_dict['NAME'] == 'Athena':
             conn = connect(driver_path=os.path.join(os.path.dirname(os.path.abspath(__file__)), 'athena-jdbc/AthenaJDBC41-1.0.0.jar'))
+
+        elif conn.settings_dict['NAME'] == 'MSSQL':
+            hostname = conn.settings_dict['HOST']
+
+            username = conn.settings_dict['USER']
+            password = conn.settings_dict['PASSWORD']
+            port = conn.settings_dict['PORT']
+            dbname = conn.settings_dict['DBNAME']
+            conn = pyodbc.connect(
+                "DRIVER={ODBC Driver 17 for SQL SERVER};SERVER="+hostname+";PORT="+str(port)+";DATABASE="+dbname+";UID="+username+";PWD="+password)
+            query = query.replace("%s", "?")
+
         with conn.cursor() as cursor:
             cursor.execute(query, bind_params)
             rows = []
@@ -228,6 +236,7 @@ class ChartView(APIView):
             params = request.data.get('params', {})
             user = request.data.get('user', None)
             data = DataProcessor().fetch_chart_data(chart_url, params, user, request.data.get('chartType'))
+
             return Response(data)
         except Exception as e:
             return Response({'error': str(e)}, status.HTTP_400_BAD_REQUEST)
