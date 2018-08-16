@@ -16,4 +16,5 @@ croniter==0.3.16
 PyAthenaJDBC==1.0.9
 social-auth-app-django==1.1.0
 selenium==3.13.0
-
+pyodbc==4.0.23
+django-pyodbc-azure==1.10.0.0
