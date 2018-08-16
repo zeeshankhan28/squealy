@@ -27,10 +27,6 @@
       "description": "User name for the default admin user",
       "value": "admin"
     },
-    "ADMIN_PASS": {
-      "description": "Password for the default admin user. Do not share this passwords with ither users. You can create new users from the admin page and generate credentials for the new users",
-      "value": "admin@123"
-    },
     "JWT_KEY": {
       "description": "(Optional) This is the shared private key that will be used to decode the JWT token. This is required for optionally enabling JWT Authentication mechanism that would enable the user to login via an access token parameter in the url or request body. Refer the squealy documentation for more information on setting up JWT Authentication.",
       "required": false
