@@ -1,6 +1,6 @@
 import os
 import re
-import pyodbc
+#import pyodbc
 from django.contrib.auth.models import Permission
 from django.contrib.contenttypes.models import ContentType
 from django.db import connections
@@ -169,16 +169,16 @@ class DataProcessor(object):
         if conn.settings_dict['NAME'] == 'Athena':
             conn = connect(driver_path=os.path.join(os.path.dirname(os.path.abspath(__file__)), 'athena-jdbc/AthenaJDBC41-1.0.0.jar'))
 
-        elif conn.settings_dict['NAME'] == 'MSSQL':
-            hostname = conn.settings_dict['HOST']
-
-            username = conn.settings_dict['USER']
-            password = conn.settings_dict['PASSWORD']
-            port = conn.settings_dict['PORT']
-            dbname = conn.settings_dict['DBNAME']
-            conn = pyodbc.connect(
-                "DRIVER={ODBC Driver 17 for SQL SERVER};SERVER="+hostname+";PORT="+str(port)+";DATABASE="+dbname+";UID="+username+";PWD="+password)
-            query = query.replace("%s", "?")
+        # elif conn.settings_dict['NAME'] == 'MSSQL':
+        #     hostname = conn.settings_dict['HOST']
+        #
+        #     username = conn.settings_dict['USER']
+        #     password = conn.settings_dict['PASSWORD']
+        #     port = conn.settings_dict['PORT']
+        #     dbname = conn.settings_dict['DBNAME']
+        #     conn = pyodbc.connect(
+        #         "DRIVER={ODBC Driver 17 for SQL SERVER};SERVER="+hostname+";PORT="+str(port)+";DATABASE="+dbname+";UID="+username+";PWD="+password)
+        #     query = query.replace("%s", "?")
 
         with conn.cursor() as cursor:
             cursor.execute(query, bind_params)
