@@ -13,7 +13,7 @@ def create_default_superuser(apps, schema_editor):
     """
     User = apps.get_model('auth', 'user')
     username = os.environ.get('ADMIN_USERNAME', 'admin')
-    password =  os.environ.get('ADMIN_PASS', 'admin@123')
+    password =  os.environ.get('SECRET_ADMIN_PASSWORD', 'admin@123')
     default_super_user = User(
         username=username,
         is_superuser=True,
